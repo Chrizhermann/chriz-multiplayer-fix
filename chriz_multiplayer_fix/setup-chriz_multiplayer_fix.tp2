@@ -8,8 +8,22 @@ VERSION ~0.1.0~
 
 BEGIN ~Multiplayer lobby crash fix (EEex)~ DESIGNATED 0
 ACTION_IF (FILE_EXISTS ~override/M___EEex.lua~) AND (DIRECTORY_EXISTS ~EEex_scripts/extra_pattern_dbs~) BEGIN
-  COPY ~chriz_multiplayer_fix/lua/M_CZMP.lua~ ~override/M_CZMP.lua~
-  COPY ~chriz_multiplayer_fix/lua/CZMP.db~ ~EEex_scripts/extra_pattern_dbs/CZMP.db~
+  // InfinityLoader does not start the game when a pattern finds no match, so
+  // the patterns go in only where the game executable has the lobby code.
+  INCLUDE ~chriz_multiplayer_fix/lib/czmp_preflight.tpa~
+  LAF czmp_preflight STR_VAR db = ~chriz_multiplayer_fix/lua/CZMP.db~ RET czmp_ok = ok czmp_reason = reason czmp_executable = executable END
+  ACTION_IF czmp_ok BEGIN
+    COPY ~chriz_multiplayer_fix/lua/M_CZMP.lua~ ~override/M_CZMP.lua~
+    COPY ~chriz_multiplayer_fix/lua/CZMP.db~ ~EEex_scripts/extra_pattern_dbs/CZMP.db~
+    PRINT ~Chriz Multiplayer Fix: the lobby crash fix is installed for %czmp_executable%.~
+  END ELSE BEGIN
+    ACTION_FOR_EACH czmp_file IN ~override/M_CZMP.lua~ ~EEex_scripts/extra_pattern_dbs/CZMP.db~ BEGIN
+      ACTION_IF FILE_EXISTS ~%czmp_file%~ BEGIN
+        DELETE ~%czmp_file%~
+      END
+    END
+    PRINT ~Chriz Multiplayer Fix: the lobby crash fix is inactive; %czmp_reason%. The game starts and plays as before.~
+  END
 END ELSE BEGIN
   PRINT ~Chriz Multiplayer Fix: the lobby crash fix is inactive; EEex is required. Install EEex, then reinstall component 0.~
 END

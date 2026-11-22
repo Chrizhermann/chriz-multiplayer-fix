@@ -32,7 +32,20 @@ local TEXT = {
     CZMS_DONE_TO_SP = "Copied. Load \"%s\" from Single Player > Load Game.",
     CZMS_DONE_TO_MP = "Copied. Load \"%s\" from Multiplayer > Load Game.",
     CZMS_FAILED = "The save could not be copied: %s\n\nNothing was changed.",
+    CZMS_FAILED_LEFT = "The save could not be copied: %s\n\nThis unfinished copy could not be removed; please delete it:\n%s",
 }
+
+-- Texts come from this table, so a language change (which replaces the
+-- game's uiStrings) cannot turn them into raw keys. uiStrings gets them too,
+-- for the popup button label, after every load of the game's texts.
+local function text(key)
+    return TEXT[key]
+end
+
+local function addUiStrings()
+    if type(uiStrings) ~= "table" then return end
+    for key, value in pairs(TEXT) do uiStrings[key] = value end
+end
 
 -------------------------------------------------------------------------------
 -- Windows file functions
@@ -131,6 +144,21 @@ local function splitSaveFolder(folder)
     return tonumber(number), name or folder
 end
 
+local function exists(path)
+    return kernel32.GetFileAttributesW(toWide(path)) ~= INVALID_ATTRIBUTES
+end
+
+-- The creation time of a file in Unix seconds, or nil.
+local function creationTime(path)
+    local data = ffi.new("CZMS_FIND_DATAW")
+    local handle = kernel32.FindFirstFileW(toWide(path), data)
+    if handle == INVALID_HANDLE then return nil end
+    kernel32.FindClose(handle)
+    local ticks = data.ftCreationTime.dwHighDateTime * 4294967296 + data.ftCreationTime.dwLowDateTime
+    return math.floor(ticks / 10000000) - 11644473600
+end
+CZMS.CreationTime = creationTime
+
 local function nextFreeFolder(targetRoot, name)
     local highest = 1 -- 0 and 1 are the auto and quick save slots
     for _, entry in ipairs(listFolder(targetRoot)) do
@@ -142,16 +170,29 @@ local function nextFreeFolder(targetRoot, name)
     return string.format("%09d-%s", highest + 1, name)
 end
 
--- Returns the new folder name, or nil and a reason.
+-- Copies the save folder fileName out of "save" (toMultiplayer) or "mpsave".
+-- fileTime is the time the Load screen shows for the save (the creation time
+-- of its BALDUR.gam): the folder is copied only when it is that very save, so
+-- a save from another list (a Black Pits save in bpsave, say) whose folder
+-- has the same name as one in "save" is never copied in its place.
+-- Returns the new folder name, or nil, a reason and the path of an
+-- unfinished copy that could not be removed (if any).
 CZMS.ProfileFolder = profileFolder
 
-function CZMS.CopySave(fileName, toMultiplayer)
+function CZMS.CopySave(fileName, toMultiplayer, fileTime)
     local profile = CZMS.ProfileFolder()
     if not profile then return nil, "the game's profile folder was not found" end
     local sourceRoot = profile .. BS .. (toMultiplayer and "save" or "mpsave")
     local targetRoot = profile .. BS .. (toMultiplayer and "mpsave" or "save")
     local source = sourceRoot .. BS .. fileName
-    if not isDirectory(source) then return nil, "the save folder " .. source .. " was not found" end
+    local mode = toMultiplayer and "single-player" or "multiplayer"
+    if not isDirectory(source) then
+        return nil, "it is not one of the " .. mode .. " saves in " .. sourceRoot
+    end
+    local created = creationTime(source .. BS .. "BALDUR.gam")
+    if tonumber(fileTime) and not (created and math.abs(created - tonumber(fileTime)) <= 1) then
+        return nil, "it is not one of the " .. mode .. " saves in " .. sourceRoot
+    end
     if not isDirectory(targetRoot) and kernel32.CreateDirectoryW(toWide(targetRoot), nil) == 0 then
         return nil, "the folder " .. targetRoot .. " could not be created"
     end
@@ -163,22 +204,26 @@ function CZMS.CopySave(fileName, toMultiplayer)
         return nil, "the folder " .. target .. " could not be created (error " .. tonumber(kernel32.GetLastError()) .. ")"
     end
 
-    local copied = {}
+    local written = {}
     local failure
     for _, entry in ipairs(listFolder(source)) do
         if not entry.directory then
             local to = target .. BS .. entry.name
+            -- A failed copy can leave a partial file behind: it is removed too.
+            written[#written + 1] = to
             if kernel32.CopyFileW(toWide(source .. BS .. entry.name), toWide(to), 1) == 0 then
                 failure = entry.name .. " (error " .. tonumber(kernel32.GetLastError()) .. ")"
                 break
             end
-            copied[#copied + 1] = to
         end
     end
-    if failure or #copied == 0 then
-        for _, path in ipairs(copied) do kernel32.DeleteFileW(toWide(path)) end
+    if failure or #written == 0 then
+        for _, path in ipairs(written) do
+            if exists(path) then kernel32.DeleteFileW(toWide(path)) end
+        end
         kernel32.RemoveDirectoryW(toWide(target))
-        return nil, failure and ("copying " .. failure .. " failed") or "the save folder is empty"
+        local reason = failure and ("copying " .. failure .. " failed") or "the save folder is empty"
+        return nil, reason, exists(target) and target or nil
     end
     print(string.format("Save copy button: %s -> %s", source, target))
     return folder
@@ -198,6 +243,12 @@ local function intoMultiplayer()
     return not e:IsMultiplayer()
 end
 
+-- Hidden while BG2:EE imports a BG:EE save: the Load screen then lists the
+-- other game's saves.
+function CZMS.Available()
+    return not (type(gameSaves) == "table" and gameSaves.isImporting == 1)
+end
+
 local function saveFiles()
     local files = gameSaves and gameSaves.files
     return type(files) == "table" and files or {}
@@ -215,25 +266,30 @@ local function askAndCopy(save)
     local toMultiplayer = intoMultiplayer()
     local name = save.slotName or save.fileName
     local when = ((save.chapter or "") .. " " .. (save.time or "")):gsub("^%s+", ""):gsub("%s+$", "")
-    local question = string.format(getUiString(toMultiplayer and "CZMS_ASK_TO_MP" or "CZMS_ASK_TO_SP"), name, when)
+    local question = string.format(text(toMultiplayer and "CZMS_ASK_TO_MP" or "CZMS_ASK_TO_SP"), name, when)
+    addUiStrings()
     popup2Button(question, "CZMS_COPY", function()
-        local ok, folder, reason = pcall(CZMS.CopySave, save.fileName, toMultiplayer)
+        local ok, folder, reason, left = pcall(CZMS.CopySave, save.fileName, toMultiplayer, save.fileTime)
         if ok and folder then
-            popupInfo(string.format(getUiString(toMultiplayer and "CZMS_DONE_TO_MP" or "CZMS_DONE_TO_SP"), name))
+            popupInfo(string.format(text(toMultiplayer and "CZMS_DONE_TO_MP" or "CZMS_DONE_TO_SP"), name))
         else
             local why = ok and reason or tostring(folder)
-            print("Save copy button: " .. why)
-            popupInfo(string.format(getUiString("CZMS_FAILED"), why))
+            print("Save copy button: " .. why .. (left and (" (left behind: " .. left .. ")") or ""))
+            if left then
+                popupInfo(string.format(text("CZMS_FAILED_LEFT"), why, left))
+            else
+                popupInfo(string.format(text("CZMS_FAILED"), why))
+            end
         end
     end, "CANCEL_BUTTON")
 end
 
 function CZMS.ButtonText()
-    return getUiString(intoMultiplayer() and "CZMS_TO_MP" or "CZMS_TO_SP")
+    return text(intoMultiplayer() and "CZMS_TO_MP" or "CZMS_TO_SP")
 end
 
 function CZMS.CopyText()
-    return getUiString("CZMS_COPY")
+    return text("CZMS_COPY")
 end
 
 function CZMS.SelectedClickable()
@@ -242,16 +298,16 @@ end
 
 function CZMS.SelectedAction()
     local save = selectedSave()
-    if save then askAndCopy(save) end
+    if save and CZMS.Available() then askAndCopy(save) end
 end
 
 function CZMS.RowEnabled(row)
-    return rowSave(row) ~= nil
+    return rowSave(row) ~= nil and CZMS.Available()
 end
 
 function CZMS.RowAction(row)
     local save = rowSave(row)
-    if save then askAndCopy(save) end
+    if save and CZMS.Available() then askAndCopy(save) end
 end
 
 -- Menu geometry.
@@ -402,8 +458,11 @@ local function install()
 end
 
 state.queued = true
+if EEex_Menu_AddTranslationLoadedListener then
+    EEex_Menu_AddTranslationLoadedListener(addUiStrings)
+end
 EEex_Menu_AddAfterMainFileLoadedListener(function()
-    for key, text in pairs(TEXT) do uiStrings[key] = text end
+    addUiStrings()
     EEex_Menu_LoadFile("CZMS")
     local ok, err = pcall(install)
     if not ok then print("Save copy button: " .. tostring(err)) end

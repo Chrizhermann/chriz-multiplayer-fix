@@ -108,6 +108,13 @@ local function install()
             czmp_run_here:
             #MANUAL_HOOK_EXIT(0)
         ]] })
+        -- The hand-over exit leaves through its own jmp; tell EEex's debug
+        -- watchdog (off by default) which registers it changes there.
+        if EEex_HookIntegrityWatchdog_IgnoreRegistersForInstance then
+            EEex_HookIntegrityWatchdog_IgnoreRegistersForInstance(onMessage, 1, {
+                EEex_HookIntegrityWatchdogRegister.RCX,
+                EEex_HookIntegrityWatchdogRegister.R10, EEex_HookIntegrityWatchdogRegister.R11 })
+        end
     end)
     EEex_EnableCodeProtection()
     if not ok then error(err) end

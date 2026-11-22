@@ -13,6 +13,7 @@ menu
 			bam GUIBUTWT
 			text lua "CZMS.ButtonText()"
 			text style "button"
+			enabled "CZMS.Available()"
 			clickable lua "CZMS.SelectedClickable()"
 			action "CZMS.SelectedAction()"
 		}

@@ -18,6 +18,7 @@ ALLOWLIST = (
     "LICENSE",
     "docs/compatibility.md",
     "chriz_multiplayer_fix/setup-chriz_multiplayer_fix.tp2",
+    "chriz_multiplayer_fix/lib/czmp_preflight.tpa",
     "chriz_multiplayer_fix/lua/CZMP.db",
     "chriz_multiplayer_fix/lua/CZMS.menu",
     "chriz_multiplayer_fix/lua/M_CZMP.lua",

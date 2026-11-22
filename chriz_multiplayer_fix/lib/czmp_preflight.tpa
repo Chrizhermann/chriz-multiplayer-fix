@@ -1,0 +1,197 @@
+// Native-hook safety for component 0 (read-only, file-based).
+//
+// InfinityLoader reads every pattern db in EEex_scripts/extra_pattern_dbs when
+// the game starts. A pattern that finds no match stops the game before its
+// window opens (seen on IWD:EE 2.7.3.0 with EEex v1.3.1), and then no EEex mod
+// runs at all. CZMP.db is therefore installed only when every one of its
+// patterns occurs exactly once in an executable section of the executable the
+// loader starts. Nothing else about the game is looked at.
+
+// The executable InfinityLoader starts: the first existing name from its
+// ExeNames setting, with the loader's own default list as fallback.
+DEFINE_ACTION_FUNCTION czmp_game_executable
+  RET executable
+BEGIN
+  OUTER_SPRINT czmp_names ~Baldur.exe,BaldurII.exe,icewind.exe,SiegeOfDragonspear.exe~
+  ACTION_IF FILE_EXISTS ~InfinityLoader.ini~ BEGIN
+    COPY - ~InfinityLoader.ini~ ~czmp_ini_probe~
+      REPLACE_EVALUATE CASE_INSENSITIVE ~^[ %TAB%]*ExeNames[ %TAB%]*=\([^%LNL%%MNL%]*\)~ BEGIN
+        SPRINT czmp_names ~%MATCH1%~
+      END ~%MATCH0%~
+  END
+  OUTER_SPRINT executable ~~
+  OUTER_INNER_PATCH ~%czmp_names%~ BEGIN
+    REPLACE_EVALUATE ~\([^,]+\)~ BEGIN
+      INNER_PATCH_SAVE czmp_name ~%MATCH1%~ BEGIN
+        REPLACE_TEXTUALLY ~^[ %TAB%]+~ ~~
+        REPLACE_TEXTUALLY ~[ %TAB%]+$~ ~~
+      END
+      PATCH_IF ((STRING_LENGTH ~%executable%~ = 0) AND (STRING_LENGTH ~%czmp_name%~ > 0)) BEGIN
+        PATCH_IF (FILE_EXISTS ~%czmp_name%~) BEGIN
+          SPRINT executable ~%czmp_name%~
+        END
+      END
+    END ~%MATCH0%~
+  END
+END
+
+// ok = 1 when every pattern of the db matches exactly once in an executable
+// section of the game executable; otherwise ok = 0 and reason says why.
+DEFINE_ACTION_FUNCTION czmp_preflight
+  STR_VAR db = ~~
+  RET ok reason executable
+BEGIN
+  OUTER_SET ok = 0
+  OUTER_SPRINT reason ~~
+  LAF czmp_game_executable RET executable END
+
+  // The patterns, byte by byte: -1 is a wildcard.
+  OUTER_SET czmp_patterns = 0
+  COPY - ~%db%~ ~czmp_db_probe~
+    REPLACE_EVALUATE ~^Pattern=\([0-9A-Fa-f?]+\)~ BEGIN
+      SPRINT $czmp_pattern(~%czmp_patterns%~) ~%MATCH1%~
+      SET czmp_patterns += 1
+    END ~%MATCH0%~
+
+  ACTION_IF (STRING_LENGTH ~%executable%~ = 0) BEGIN
+    OUTER_SPRINT reason ~no game executable was found~
+  END ELSE ACTION_IF (czmp_patterns = 0) BEGIN
+    OUTER_SPRINT reason ~the pattern file has no patterns~
+  END ELSE BEGIN
+    OUTER_FOR (p = 0; p < czmp_patterns; ++p) BEGIN
+      OUTER_SPRINT czmp_text $czmp_pattern(~%p%~)
+      OUTER_SET czmp_size = (STRING_LENGTH ~%czmp_text%~) / 2
+      OUTER_SET $czmp_size(~%p%~) = czmp_size
+      OUTER_FOR (i = 0; i < czmp_size; ++i) BEGIN
+        OUTER_INNER_PATCH ~%czmp_text%~ BEGIN
+          READ_ASCII (i * 2) czmp_hex (2)
+        END
+        ACTION_IF (~%czmp_hex%~ STRING_EQUAL ~??~) BEGIN
+          OUTER_SET $czmp_byte(~%p%~ ~%i%~) = (0 - 1)
+        END ELSE BEGIN
+          OUTER_SPRINT czmp_hex ~0x%czmp_hex%~
+          OUTER_SET $czmp_byte(~%p%~ ~%i%~) = czmp_hex
+        END
+      END
+      // The longest run without wildcards is searched first.
+      OUTER_SET czmp_best_at = 0
+      OUTER_SET czmp_best_length = 0
+      OUTER_SET czmp_run_at = 0
+      OUTER_SET czmp_run_length = 0
+      OUTER_FOR (i = 0; i <= czmp_size; ++i) BEGIN
+        OUTER_SET czmp_literal = 0
+        ACTION_IF (i < czmp_size) BEGIN
+          ACTION_IF ($czmp_byte(~%p%~ ~%i%~) >= 0) BEGIN
+            OUTER_SET czmp_literal = 1
+          END
+        END
+        ACTION_IF czmp_literal BEGIN
+          ACTION_IF (czmp_run_length = 0) BEGIN
+            OUTER_SET czmp_run_at = i
+          END
+          OUTER_SET czmp_run_length += 1
+        END ELSE BEGIN
+          ACTION_IF (czmp_run_length > czmp_best_length) BEGIN
+            OUTER_SET czmp_best_at = czmp_run_at
+            OUTER_SET czmp_best_length = czmp_run_length
+          END
+          OUTER_SET czmp_run_length = 0
+        END
+      END
+      OUTER_SET $czmp_anchor_at(~%p%~) = czmp_best_at
+      OUTER_PATCH_SAVE czmp_anchor ~~ BEGIN
+        INSERT_BYTES 0 czmp_best_length
+        FOR (j = 0; j < czmp_best_length; ++j) BEGIN
+          SET k = czmp_best_at + j
+          WRITE_BYTE j $czmp_byte(~%p%~ ~%k%~)
+        END
+      END
+      OUTER_SPRINT $czmp_anchor(~%p%~) ~%czmp_anchor%~
+      OUTER_SET $czmp_matches(~%p%~) = 0
+      OUTER_SET $czmp_in_code(~%p%~) = 0
+      ACTION_IF (czmp_best_length < 8) BEGIN
+        OUTER_SPRINT reason ~pattern %p% has too few fixed bytes~
+      END
+    END
+
+    ACTION_IF (STRING_LENGTH ~%reason%~ = 0) BEGIN
+      COPY - ~%executable%~ ~czmp_exe_probe~
+        // A 64-bit PE image with its section table.
+        SET czmp_pe_ok = 0
+        PATCH_IF (SOURCE_SIZE >= 0x40) BEGIN
+          READ_SHORT 0 czmp_dos_magic
+          READ_LONG 0x3c czmp_pe
+          PATCH_IF ((czmp_dos_magic = 0x5a4d) AND (czmp_pe >= 0x40) AND (czmp_pe <= SOURCE_SIZE - 26)) BEGIN
+            READ_LONG czmp_pe czmp_pe_magic
+            READ_SHORT (czmp_pe + 4) czmp_machine
+            READ_SHORT (czmp_pe + 6) czmp_sections
+            READ_SHORT (czmp_pe + 20) czmp_optional_size
+            READ_SHORT (czmp_pe + 24) czmp_optional_magic
+            PATCH_IF ((czmp_pe_magic = 0x4550) AND (czmp_machine = 0x8664) AND (czmp_optional_magic = 0x20b)
+                   AND (czmp_sections >= 1)
+                   AND (czmp_pe + 24 + czmp_optional_size + czmp_sections * 40 <= SOURCE_SIZE)) BEGIN
+              SET czmp_pe_ok = 1
+            END
+          END
+        END
+        PATCH_IF (NOT czmp_pe_ok) BEGIN
+          SPRINT reason ~%executable% is not a 64-bit Windows program~
+        END ELSE BEGIN
+          FOR (p = 0; p < czmp_patterns; ++p) BEGIN
+            SET czmp_size = $czmp_size(~%p%~)
+            SET czmp_anchor_at = $czmp_anchor_at(~%p%~)
+            SPRINT czmp_anchor $czmp_anchor(~%p%~)
+            SET czmp_found = 0
+            SET czmp_found_in_code = 0
+            SET czmp_at = INDEX_BUFFER (CASE_SENSITIVE EXACT_MATCH ~%czmp_anchor%~)
+            WHILE (czmp_at >= 0) BEGIN
+              SET czmp_start = czmp_at - czmp_anchor_at
+              SET czmp_same = ((czmp_start >= 0) AND (czmp_start + czmp_size <= SOURCE_SIZE))
+              FOR (i = 0; czmp_same AND (i < czmp_size); ++i) BEGIN
+                PATCH_IF ($czmp_byte(~%p%~ ~%i%~) >= 0) BEGIN
+                  READ_BYTE (czmp_start + i) czmp_value
+                  PATCH_IF (czmp_value != $czmp_byte(~%p%~ ~%i%~)) BEGIN
+                    SET czmp_same = 0
+                  END
+                END
+              END
+              PATCH_IF czmp_same BEGIN
+                SET czmp_in_code = 0
+                FOR (s = 0; s < czmp_sections; ++s) BEGIN
+                  SET czmp_section = czmp_pe + 24 + czmp_optional_size + s * 40
+                  READ_LONG (czmp_section + 16) czmp_raw_size
+                  READ_LONG (czmp_section + 20) czmp_raw_start
+                  READ_LONG (czmp_section + 36) czmp_flags
+                  PATCH_IF (((czmp_flags BAND 0x20000000) != 0) AND (czmp_start >= czmp_raw_start)
+                         AND (czmp_start + czmp_size <= czmp_raw_start + czmp_raw_size)) BEGIN
+                    SET czmp_in_code = 1
+                  END
+                END
+                SET czmp_found += 1
+                SET czmp_found_in_code += czmp_in_code
+              END
+              SET czmp_at = INDEX_BUFFER (CASE_SENSITIVE EXACT_MATCH ~%czmp_anchor%~ (czmp_at + 1))
+            END
+            SET $czmp_matches(~%p%~) = czmp_found
+            SET $czmp_in_code(~%p%~) = czmp_found_in_code
+          END
+        END
+      ACTION_IF (STRING_LENGTH ~%reason%~ = 0) BEGIN
+        OUTER_FOR (p = 0; p < czmp_patterns; ++p) BEGIN
+          ACTION_IF ($czmp_matches(~%p%~) = 0) AND (STRING_LENGTH ~%reason%~ = 0) BEGIN
+            OUTER_SPRINT reason ~this game version is not supported (%executable% lacks the lobby code the fix needs)~
+          END
+          ACTION_IF ($czmp_matches(~%p%~) > 1) AND (STRING_LENGTH ~%reason%~ = 0) BEGIN
+            OUTER_SPRINT reason ~this game version is not supported (the lobby code in %executable% is ambiguous)~
+          END
+          ACTION_IF ($czmp_matches(~%p%~) = 1) AND ($czmp_in_code(~%p%~) = 0) AND (STRING_LENGTH ~%reason%~ = 0) BEGIN
+            OUTER_SPRINT reason ~this game version is not supported (the lobby code in %executable% lies outside the program code)~
+          END
+        END
+        ACTION_IF (STRING_LENGTH ~%reason%~ = 0) BEGIN
+          OUTER_SET ok = 1
+        END
+      END
+    END
+  END
+END

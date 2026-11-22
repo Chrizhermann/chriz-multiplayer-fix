@@ -1,6 +1,9 @@
 # Support and verification
 
-Target: Windows x64 engine **2.7.3.0** with **EEex v1.2.0 or v1.3.1**. Both
+Target: Windows x64 engine **2.7.3.0** with **EEex v1.3.1** (tested in the
+labs below). **EEex v1.2.0** is checked against its source only: every EEex
+function the mod calls exists there, `EEex_Assembly_x86-64.lua` is
+byte-identical to v1.3.1, and `EEex_scripts/extra_pattern_dbs` exists. Both
 components only add runtime files; no game resource, save, executable on disk
 or shared loader setting is edited.
 
@@ -49,6 +52,32 @@ Each pattern matches exactly once in the Steam 2.7.3.0 `Baldur.exe` of BG:EE
 and BG2:EE (EET uses the BG2:EE exe) and in the 2.7.3.0 `Icewind.exe`
 (`tests/test_patterns.py`).
 
+### The check at install time
+
+InfinityLoader resolves every pattern in `EEex_scripts/extra_pattern_dbs`
+before the game window opens, and one pattern that does not match stops the
+game from starting: in the IWD:EE lab (2.7.3.0, EEex v1.3.1) a `CZMP.db` with
+one changed pattern left the game without a window for 1.7 minutes, where it
+normally opens after 2 seconds. A check inside the game comes too late for
+that, so component 0 checks the executable when it is installed
+(`lib/czmp_preflight.tpa`):
+
+- The executable is the one InfinityLoader starts: the first existing name in
+  `[General] ExeNames` of `InfinityLoader.ini` (EEex's default list when the
+  line is missing).
+- It must be a 64-bit Windows program, and every pattern of `CZMP.db` must
+  match exactly once, byte for byte, inside its program code.
+- Otherwise neither `M_CZMP.lua` nor `CZMP.db` is installed, copies left by an
+  earlier install are removed (uninstalling puts them back), and the log names
+  the reason. The save copy button does not depend on it.
+
+The bytes at both hook sites are checked again in the game before patching;
+any difference there leaves the fix inactive with one log line.
+
+After a game update the patterns are already in place, so the mod has to be
+installed again for the check to run on the new executable (EEex itself needs
+the same after an engine update).
+
 ### Verified in quiet labs (2026-11-22)
 
 | Game | Without the fix | With the fix |
@@ -72,8 +101,28 @@ and a standalone BG:EE game (patterns only).
 - **BG:EE, BG2:EE, EET** select a save in a list, so one button in the bottom
   row copies the selected save and is clickable only while one is selected,
   like Load and Delete.
+- Only the save the Load screen lists is copied. Each listed save carries the
+  creation time of its `BALDUR.gam` (`gameSaves.files[i].fileTime`), and the
+  button copies a folder from `save` or `mpsave` only when its `BALDUR.gam`
+  was created at that time. Lists from other folders, such as EET's Black Pits
+  campaigns (`bpsave`), can hold a folder with the same name; the button then
+  says the save is not one of the single-player or multiplayer saves and copies
+  nothing.
+- The button is hidden while BG2:EE imports a BG:EE save: the Load screen then
+  lists the other game's saves.
+- If a copy fails halfway, the button deletes what it wrote. If that is not
+  possible either, it names the unfinished folder so the player can delete it.
+- Its texts are English and are added again after the game reloads its
+  language files, so they stay after a language change.
 - Verified 2026-11-22 in both labs, in both directions: the button's copies
   were byte-identical to the originals. Saves copied between the folders
   loaded in the other mode with the same party, including characters players
   had created in multiplayer (round trips multiplayer → single player →
   multiplayer on IWD:EE, single player → multiplayer → single player on EET).
+- Verified again after these checks were added (2026-11-22): on EET a Black
+  Pits save with the same folder name as a multiplayer save was refused and
+  nothing was copied, while copies from the main campaign's Load screen in
+  both directions were identical; on IWD:EE copies in both directions, through
+  the lobby for multiplayer, were identical. The listed time matched the
+  `BALDUR.gam` creation time for all 4 EET multiplayer saves and all 6 IWD:EE
+  single-player saves, and every lobby round trip ended without a crash.

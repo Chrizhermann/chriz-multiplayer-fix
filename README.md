@@ -8,8 +8,8 @@ Two EEex fixes for multiplayer in **BG:EE (incl. SoD)**, **BG2:EE**, **EET**, an
    **Copy to single player** / **Copy to multiplayer** button right on the Load screen,
    keeping the original save untouched.
 
-Part of **[Chriz Easy BG](https://bg.chrizfader.org/collection)** &
-**[Chriz Easy IWD](https://bg.chrizfader.org/iwd)**
+Installed by default with **[Chriz Easy BG](https://bg.chrizfader.org/collection)** &
+**[Chriz Easy IWD](https://bg.chrizfader.org/iwd)** from their next releases.
 
 ---
 
@@ -39,8 +39,8 @@ hand.
 ### Requirements & Installation
 
 - Windows x64 **BG:EE (including SoD), BG2:EE, EET, or IWD:EE 2.7.3.0** with
-  [EEex](https://github.com/Bubb13/EEex) **v1.2.0 or v1.3.1** (LuaJIT enabled, EEex's default,
-  is required for the save copy button).
+  [EEex](https://github.com/Bubb13/EEex) **v1.3.1** (tested) or **v1.2.0** (checked against its
+  source, not tested in a game). The save copy button needs LuaJIT enabled (EEex's default).
 
 1. Close the game and install EEex first.
 2. Copy the `chriz_multiplayer_fix` folder into your game directory.
@@ -65,9 +65,12 @@ simultaneously, causing a double-free / heap corruption crash. Two small EEex ho
 
 ### Fallback Behavior & Support Docs
 
-- **Safe fallbacks:** If an executable's bytes differ from the verified `2.7.3.0` signatures,
-  the crash fix stays inactive and the game runs unmodified. If EEex is missing at install
-  time, both components install as logged no-ops without aborting.
+- **Safe fallbacks:** The installer checks the game's executable before it installs the crash
+  fix. If its lobby code differs from the verified `2.7.3.0` builds (another engine version,
+  say), component 0 installs nothing and says so in its log, and the game starts and plays as
+  before. After a game update, install the mod again so the check runs on the new executable.
+  If EEex is missing at install time, both components install as logged no-ops without
+  aborting.
 - **Documentation & tests:** [Support and verification details](docs/compatibility.md) ·
   [Changelog](CHANGELOG.md) · [Offline tests](tests/README.md)
 

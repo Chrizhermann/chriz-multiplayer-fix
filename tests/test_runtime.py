@@ -54,6 +54,10 @@ def fix_runtime(labels=True, wake_bytes=WAKE_BYTES, eeex=True):
             memory[address] = 0xE9
         end
         EEex_GameState_AddInitializedListener = function(f) listeners[#listeners + 1] = f end
+        ignored = {}
+        EEex_HookIntegrityWatchdog_IgnoreRegistersForInstance = function(address, instance, registers)
+            ignored[#ignored + 1] = { address = address, instance = instance, registers = registers }
+        end
     """)
     if eeex:
         lua.execute("EEex_Active = true")
@@ -90,6 +94,10 @@ def test_fix_installs_both_hooks():
     assert "mov r10, qword ptr ds:[rbx+128]" in hooks[0].asm  # notify_ (0x88) seen from pump + 8
     assert "jmp #L(czmp_wake_tasks)" in hooks[1].asm
     assert list(lua.globals().printed.values()) == ["Multiplayer lobby fix: active"]
+    # The hand-over exit tells EEex's debug watchdog which registers it changes.
+    ignored = lua.globals().ignored[1]
+    assert ignored.address == WAKE + 0xB0 and ignored.instance == 1
+    assert sorted(ignored.registers.values()) == [2, 3, 4]
     # A second load of the file (menu reload) adds nothing.
     start(lua)
     assert len(lua.globals().hooks) == 2
@@ -134,6 +142,8 @@ def button_runtime(menu_items, multiplayer=True):
         end
         popupInfo = function(text) infos[#infos + 1] = text end
         EEex_Menu_AddAfterMainFileLoadedListener = function(f) listeners[#listeners + 1] = f end
+        translationListeners = {}
+        EEex_Menu_AddTranslationLoadedListener = function(f) translationListeners[#translationListeners + 1] = f end
         EEex_Menu_LoadFile = function(name) loaded[#loaded + 1] = { name = name, text = uiStrings.CZMS_COPY } end
         EEex_Menu_GetItemVariant = function(value) return value end
         local function makeItem(t, x, y, w, h, bam)
@@ -210,10 +220,11 @@ def test_a_free_mirror_spot_keeps_the_row_symmetric():
     assert layout(lua) == ("list", ["88 710 302 44"])
 
 
-def saves(lua, names, offset=None, selected=None):
+def saves(lua, names, offset=None, selected=None, times=None):
     files = lua.table_from([
-        lua.table_from({"fileName": n, "slotName": n.split("-", 1)[1], "chapter": "Chapter Six", "time": "2 days"})
-        for n in names
+        lua.table_from({"fileName": n, "slotName": n.split("-", 1)[1], "chapter": "Chapter Six", "time": "2 days",
+                        **({"fileTime": times[i]} if times else {})})
+        for i, n in enumerate(names)
     ])
     lua.globals().gameSaves = lua.table_from({"files": files})
     lua.globals().loadSaveOffset = offset
@@ -306,6 +317,110 @@ def test_a_missing_save_changes_nothing(tmp_path):
     info = lua.globals().infos[1]
     assert info.startswith("The save could not be copied:") and info.endswith("Nothing was changed.")
     assert not (profile / "save").exists() or not any((profile / "save").iterdir())
+
+
+def test_hidden_while_importing():
+    lua = button_runtime(IWD_ITEMS)
+    czms = lua.globals().CZMS
+    saves(lua, ["000000003-A"], offset=0)
+    assert czms.Available() and czms.RowEnabled(1)
+    lua.globals().gameSaves.isImporting = 1
+    assert not czms.Available() and not czms.RowEnabled(1)
+    czms.RowAction(1)
+    assert len(lua.globals().popups) == 0
+    lua.globals().gameSaves.isImporting = 0
+    assert czms.Available()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the copy uses the Windows file functions")
+def test_only_the_listed_save_itself_is_copied(tmp_path):
+    """A Black Pits save (bpsave) can have the same folder name as one in mpsave."""
+    lua = button_runtime(BG_ITEMS, multiplayer=True)
+    profile = tmp_path / "profile"
+    make_save(profile / "mpsave" / "000000001-Quick-Save", SAVE_FILES)
+    created = int(os.stat(profile / "mpsave" / "000000001-Quick-Save" / "BALDUR.gam").st_ctime)
+    lua.globals().test_profile = str(profile)
+    lua.execute("CZMS.ProfileFolder = function() return test_profile end")
+    czms = lua.globals().CZMS
+    assert czms.CreationTime(str(profile / "mpsave" / "000000001-Quick-Save" / "BALDUR.gam")) == created
+    folder, reason = czms.CopySave("000000001-Quick-Save", False, created - 3600)  # no third value: nothing left
+    assert folder is None
+    assert reason == "it is not one of the multiplayer saves in " + str(profile / "mpsave")
+    assert not (profile / "save").exists()
+    # The flow from the button, with the time the Load screen shows.
+    saves(lua, ["000000001-Quick-Save"], selected=1, times=[created - 3600])
+    czms.SelectedAction()
+    lua.globals().popups[1].ok()
+    assert lua.globals().infos[1].endswith("Nothing was changed.")
+    saves(lua, ["000000001-Quick-Save"], selected=1, times=[created])
+    czms.SelectedAction()
+    lua.globals().popups[2].ok()
+    assert lua.globals().infos[2] == 'Copied. Load "Quick-Save" from Single Player > Load Game.'
+    assert (profile / "save" / "000000002-Quick-Save" / "BALDUR.gam").read_bytes() == SAVE_FILES["BALDUR.gam"]
+
+
+def test_texts_survive_a_language_change():
+    lua = button_runtime(BG_ITEMS)
+    czms = lua.globals().CZMS
+    lua.execute("uiStrings = { BACK_BUTTON = 'Back (de)' }")   # a language file replaces the table
+    assert czms.ButtonText() == "Copy to single player" and czms.CopyText() == "Copy"
+    for listener in list(lua.globals().translationListeners.values()):
+        listener()
+    assert lua.globals().uiStrings.CZMS_COPY == "Copy" and lua.globals().uiStrings.BACK_BUTTON is not None
+    # The popup's button label is a uiStrings key; it is there when the popup opens.
+    lua.execute("uiStrings = {}")
+    saves(lua, ["000000052-pp"], selected=1)
+    czms.SelectedAction()
+    assert lua.globals().uiStrings.CZMS_COPY == "Copy"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the copy uses the Windows file functions")
+def test_a_failed_copy_removes_the_unfinished_copy(tmp_path):
+    import msvcrt
+    lua = button_runtime(BG_ITEMS, multiplayer=True)
+    profile = tmp_path / "profile"
+    make_save(profile / "mpsave" / "000000052-pp", SAVE_FILES)
+    lua.globals().test_profile = str(profile)
+    lua.execute("CZMS.ProfileFolder = function() return test_profile end")
+    saves(lua, ["000000052-pp"], selected=1)
+    with open(profile / "mpsave" / "000000052-pp" / "BALDUR.SAV", "rb") as held:
+        msvcrt.locking(held.fileno(), msvcrt.LK_NBLCK, 4)
+        lua.globals().CZMS.SelectedAction()
+        lua.globals().popups[1].ok()
+        msvcrt.locking(held.fileno(), msvcrt.LK_UNLCK, 4)
+    info = lua.globals().infos[1]
+    assert info.startswith("The save could not be copied: copying BALDUR.SAV (error 33) failed")
+    assert info.endswith("Nothing was changed.")
+    assert not (profile / "save").exists() or not any((profile / "save").iterdir())
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the copy uses the Windows file functions")
+def test_a_copy_that_cannot_be_removed_is_named(tmp_path):
+    import msvcrt
+    import stat
+    lua = button_runtime(BG_ITEMS, multiplayer=True)
+    profile = tmp_path / "profile"
+    make_save(profile / "mpsave" / "000000052-pp", {"A-first.txt": b"kept", **SAVE_FILES})
+    first = profile / "mpsave" / "000000052-pp" / "A-first.txt"
+    first.chmod(stat.S_IREAD)          # the copy keeps the attribute, so it cannot be deleted
+    lua.globals().test_profile = str(profile)
+    lua.execute("CZMS.ProfileFolder = function() return test_profile end")
+    saves(lua, ["000000052-pp"], selected=1)
+    try:
+        with open(profile / "mpsave" / "000000052-pp" / "BALDUR.SAV", "rb") as held:
+            msvcrt.locking(held.fileno(), msvcrt.LK_NBLCK, 4)
+            lua.globals().CZMS.SelectedAction()
+            lua.globals().popups[1].ok()
+            msvcrt.locking(held.fileno(), msvcrt.LK_UNLCK, 4)
+        left = profile / "save" / "000000002-pp"
+        info = lua.globals().infos[1]
+        assert "Nothing was changed" not in info
+        assert info.endswith("could not be removed; please delete it:\n" + str(left))
+        assert left.is_dir()
+    finally:
+        for path in profile.rglob("*"):
+            if path.is_file():
+                path.chmod(stat.S_IWRITE | stat.S_IREAD)
 
 
 def test_without_ffi_the_button_stays_away():
