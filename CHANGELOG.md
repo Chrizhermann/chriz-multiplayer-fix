@@ -13,4 +13,8 @@
   and the multiplayer saves (`M_CZMS.lua`, `CZMS.menu`). IWD:EE gets a Copy
   button in every save row; BG:EE, BG2:EE and EET get one button that copies
   the selected save. It copies only the save the Load screen lists, is hidden
-  while BG2:EE imports a BG:EE save, and removes an unfinished copy.
+  while BG2:EE imports a BG:EE save, and removes an unfinished copy. It needs
+  EEex's LuaJIT component; the installer says so when it is missing.
+- The release archive holds only `setup-chriz_multiplayer_fix.exe` (the
+  official WeiDU 249) and the `chriz_multiplayer_fix` folder, with the
+  documentation inside it; it is built from the committed files.

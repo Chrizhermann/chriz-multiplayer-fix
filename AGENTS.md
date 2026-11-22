@@ -10,10 +10,14 @@ BG and Chriz Easy IWD (`chriz-bg-collection`) pin its releases in both installer
   executables. Older patches are optional, never a target.
 - **We overwrite, fail soft.** The components copy their files whatever stood there
   before. Without EEex each component is a logged no-op. The installer checks the
-  executable InfinityLoader starts (`lib/czmp_preflight.tpa`) and leaves `CZMP.db` out
-  unless every pattern matches once in its code: one unmatched pattern stops the
-  game from starting. That is crash safety for native hooks, not a check of game
-  data; nothing in game data stops an install.
+  executable InfinityLoader starts (`lib/czmp_preflight.tpa`, `ExeNames` read like
+  Windows' `GetPrivateProfileString`) and leaves `CZMP.db` out unless every pattern
+  matches once in its `.text` section: one unmatched pattern stops the game from
+  starting. That is crash safety for native hooks, not a check of game data;
+  nothing in game data stops an install.
+- **Releases:** `python -I tools/build_release.py --weidu <official WeiDU 249 x64 weidu.exe>`
+  packs the committed files of HEAD (or `--commit`); the archive root holds only the
+  setup executable and `chriz_multiplayer_fix/`, documentation included there.
 - **Lobby fix layout comes from `CZMP.db`.** The three patterns prove every offset
   `M_CZMP.lua` uses; `M_CZMP.lua` re-checks the bytes it overwrites before hooking.
   Change an offset only together with its pattern and the tests.

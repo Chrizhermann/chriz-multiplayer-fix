@@ -8,7 +8,7 @@ Without external files the LuaJIT runtime tests (lupa) and the pattern/Lua
 consistency checks run on their own; the save copy tests copy real files in the
 pytest temp folder (Windows only). Set these to run the rest:
 
-- `WEIDU_EXE`: a WeiDU 249 executable (`test_installer.py`)
+- `WEIDU_EXE`: the official WeiDU 249 x64 executable (`test_installer.py`; `test_release.py` packs it only when its SHA-256 is the official one)
 - `CZMP_BGEE_EXE`: BG:EE 2.7.3.0 `Baldur.exe`
 - `CZMP_BG2EE_EXE`: BG2:EE 2.7.3.0 `Baldur.exe` (EET uses it too)
 - `CZMP_IWDEE_EXE`: IWD:EE 2.7.3.0 `Icewind.exe`

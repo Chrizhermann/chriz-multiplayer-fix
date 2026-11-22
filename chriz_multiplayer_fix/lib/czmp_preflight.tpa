@@ -1,41 +1,109 @@
 // Native-hook safety for component 0 (read-only, file-based).
 //
 // InfinityLoader reads every pattern db in EEex_scripts/extra_pattern_dbs when
-// the game starts. A pattern that finds no match stops the game before its
-// window opens (seen on IWD:EE 2.7.3.0 with EEex v1.3.1), and then no EEex mod
-// runs at all. CZMP.db is therefore installed only when every one of its
-// patterns occurs exactly once in an executable section of the executable the
-// loader starts. Nothing else about the game is looked at.
+// the game starts and searches each pattern in the .text section of the
+// executable it starts. A pattern that finds no match stops the game before
+// its window opens (seen on IWD:EE 2.7.3.0 with EEex v1.3.1), and then no EEex
+// mod runs at all. CZMP.db is therefore installed only when every one of its
+// patterns occurs exactly once in that .text section. Nothing else about the
+// game is looked at.
 
-// The executable InfinityLoader starts: the first existing name from its
-// ExeNames setting, with the loader's own default list as fallback.
-DEFINE_ACTION_FUNCTION czmp_game_executable
-  RET executable
+// A setting of the first [General] section of InfinityLoader.ini, read the way
+// Windows' GetPrivateProfileString reads it for InfinityLoader: section and key
+// names ignore case and surrounding blanks, the first key wins, a later
+// [General] section is not read, and the value loses its surrounding blanks and
+// one pair of enclosing quotes. found = 0 when the file or the key is missing.
+DEFINE_ACTION_FUNCTION czmp_loader_setting
+  STR_VAR key = ~~
+  RET found value
 BEGIN
-  OUTER_SPRINT czmp_names ~Baldur.exe,BaldurII.exe,icewind.exe,SiegeOfDragonspear.exe~
+  OUTER_SET found = 0
+  OUTER_SPRINT value ~~
+  OUTER_SPRINT czmp_key ~%key%~
+  ACTION_TO_LOWER czmp_key
   ACTION_IF FILE_EXISTS ~InfinityLoader.ini~ BEGIN
     COPY - ~InfinityLoader.ini~ ~czmp_ini_probe~
-      REPLACE_EVALUATE CASE_INSENSITIVE ~^[ %TAB%]*ExeNames[ %TAB%]*=\([^%LNL%%MNL%]*\)~ BEGIN
-        SPRINT czmp_names ~%MATCH1%~
-      END ~%MATCH0%~
-  END
-  OUTER_SPRINT executable ~~
-  OUTER_INNER_PATCH ~%czmp_names%~ BEGIN
-    REPLACE_EVALUATE ~\([^,]+\)~ BEGIN
-      INNER_PATCH_SAVE czmp_name ~%MATCH1%~ BEGIN
-        REPLACE_TEXTUALLY ~^[ %TAB%]+~ ~~
-        REPLACE_TEXTUALLY ~[ %TAB%]+$~ ~~
-      END
-      PATCH_IF ((STRING_LENGTH ~%executable%~ = 0) AND (STRING_LENGTH ~%czmp_name%~ > 0)) BEGIN
-        PATCH_IF (FILE_EXISTS ~%czmp_name%~) BEGIN
-          SPRINT executable ~%czmp_name%~
+      // 0 before the first [General] section, 1 inside it, 2 after it.
+      SET czmp_general = 0
+      REPLACE_EVALUATE ~[^%LNL%%MNL%]+~ BEGIN
+        INNER_PATCH_SAVE czmp_line ~%MATCH0%~ BEGIN
+          REPLACE_TEXTUALLY ~^[ %TAB%]+~ ~~
+          REPLACE_TEXTUALLY ~[ %TAB%]+$~ ~~
         END
-      END
-    END ~%MATCH0%~
+        SPRINT czmp_lower ~%czmp_line%~
+        TO_LOWER czmp_lower
+        PATCH_IF ((~%czmp_lower%~ STRING_CONTAINS_REGEXP ~^\[.*\]~) = 0) BEGIN
+          INNER_PATCH_SAVE czmp_section ~%czmp_lower%~ BEGIN
+            REPLACE_TEXTUALLY ~^\[~ ~~
+            REPLACE_TEXTUALLY ~\].*$~ ~~
+            REPLACE_TEXTUALLY ~^[ %TAB%]+~ ~~
+            REPLACE_TEXTUALLY ~[ %TAB%]+$~ ~~
+          END
+          PATCH_IF (czmp_general = 1) BEGIN
+            SET czmp_general = 2
+          END ELSE PATCH_IF ((czmp_general = 0) AND (~%czmp_section%~ STRING_EQUAL ~general~)) BEGIN
+            SET czmp_general = 1
+          END
+        END ELSE PATCH_IF ((czmp_general = 1) AND (found = 0) AND ((~%czmp_lower%~ STRING_CONTAINS_REGEXP ~=~) = 0)) BEGIN
+          INNER_PATCH_SAVE czmp_name ~%czmp_lower%~ BEGIN
+            REPLACE_TEXTUALLY ~=.*$~ ~~
+            REPLACE_TEXTUALLY ~[ %TAB%]+$~ ~~
+          END
+          PATCH_IF (~%czmp_name%~ STRING_EQUAL ~%czmp_key%~) BEGIN
+            INNER_PATCH_SAVE value ~%czmp_line%~ BEGIN
+              REPLACE_TEXTUALLY ~^[^=]*=~ ~~
+              REPLACE_TEXTUALLY ~^[ %TAB%]+~ ~~
+            END
+            PATCH_IF ((~%value%~ STRING_CONTAINS_REGEXP ~^".*"$~) = 0) BEGIN
+              INNER_PATCH_SAVE value ~%value%~ BEGIN
+                REPLACE_TEXTUALLY ~^"\(.*\)"$~ ~\1~
+              END
+            END ELSE PATCH_IF ((~%value%~ STRING_CONTAINS_REGEXP ~^'.*'$~) = 0) BEGIN
+              INNER_PATCH_SAVE value ~%value%~ BEGIN
+                REPLACE_TEXTUALLY ~^'\(.*\)'$~ ~\1~
+              END
+            END
+            SET found = 1
+          END
+        END
+      END ~%MATCH0%~
   END
 END
 
-// ok = 1 when every pattern of the db matches exactly once in an executable
+// The executable InfinityLoader starts: the first name in ExeNames that
+// exists, names taken as written between the commas. named = 0 when
+// InfinityLoader.ini has no ExeNames; the loader then starts nothing.
+DEFINE_ACTION_FUNCTION czmp_game_executable
+  RET executable named
+BEGIN
+  LAF czmp_loader_setting STR_VAR key = ~ExeNames~ RET named = found czmp_names = value END
+  OUTER_SPRINT executable ~~
+  ACTION_IF named BEGIN
+    OUTER_INNER_PATCH ~%czmp_names%~ BEGIN
+      REPLACE_EVALUATE ~[^,]+~ BEGIN
+        PATCH_IF ((STRING_LENGTH ~%executable%~ = 0) AND (FILE_EXISTS ~%MATCH0%~)) BEGIN
+          SPRINT executable ~%MATCH0%~
+        END
+      END ~%MATCH0%~
+    END
+  END
+END
+
+// Whether the loader runs EEex's Lua on LuaJIT (EEex component
+// B3-EEex-LuaJIT), which the save copy button needs.
+DEFINE_ACTION_FUNCTION czmp_luajit
+  RET luajit
+BEGIN
+  LAF czmp_loader_setting STR_VAR key = ~LuaPatchMode~ RET czmp_mode = value END
+  LAF czmp_loader_setting STR_VAR key = ~LuaVersionExternal~ RET czmp_version = value END
+  ACTION_TO_LOWER czmp_mode
+  ACTION_TO_LOWER czmp_version
+  OUTER_SET luajit = (((~%czmp_mode%~ STRING_EQUAL ~replace_internal_with_external~)
+                       OR (~%czmp_mode%~ STRING_EQUAL ~external~))
+                      AND ((~%czmp_version%~ STRING_CONTAINS_REGEXP ~luajit~) = 0))
+END
+
+// ok = 1 when every pattern of the db matches exactly once in the .text
 // section of the game executable; otherwise ok = 0 and reason says why.
 DEFINE_ACTION_FUNCTION czmp_preflight
   STR_VAR db = ~~
@@ -43,7 +111,7 @@ DEFINE_ACTION_FUNCTION czmp_preflight
 BEGIN
   OUTER_SET ok = 0
   OUTER_SPRINT reason ~~
-  LAF czmp_game_executable RET executable END
+  LAF czmp_game_executable RET executable czmp_named = named END
 
   // The patterns, byte by byte: -1 is a wildcard.
   OUTER_SET czmp_patterns = 0
@@ -53,7 +121,9 @@ BEGIN
       SET czmp_patterns += 1
     END ~%MATCH0%~
 
-  ACTION_IF (STRING_LENGTH ~%executable%~ = 0) BEGIN
+  ACTION_IF (czmp_named = 0) BEGIN
+    OUTER_SPRINT reason ~InfinityLoader.ini names no game executable~
+  END ELSE ACTION_IF (STRING_LENGTH ~%executable%~ = 0) BEGIN
     OUTER_SPRINT reason ~no game executable was found~
   END ELSE ACTION_IF (czmp_patterns = 0) BEGIN
     OUTER_SPRINT reason ~the pattern file has no patterns~
@@ -107,8 +177,8 @@ BEGIN
         END
       END
       OUTER_SPRINT $czmp_anchor(~%p%~) ~%czmp_anchor%~
-      OUTER_SET $czmp_matches(~%p%~) = 0
-      OUTER_SET $czmp_in_code(~%p%~) = 0
+      OUTER_SET $czmp_in_text(~%p%~) = 0
+      OUTER_SET $czmp_elsewhere(~%p%~) = 0
       ACTION_IF (czmp_best_length < 8) BEGIN
         OUTER_SPRINT reason ~pattern %p% has too few fixed bytes~
       END
@@ -134,15 +204,36 @@ BEGIN
             END
           END
         END
+        // The first section named .text: InfinityLoader searches only that one,
+        // as far as it reaches both in memory and in the file.
+        SET czmp_text_found = 0
+        SET czmp_text_start = 0
+        SET czmp_text_end = 0
+        PATCH_IF czmp_pe_ok BEGIN
+          FOR (s = 0; (s < czmp_sections) AND (czmp_text_found = 0); ++s) BEGIN
+            SET czmp_section = czmp_pe + 24 + czmp_optional_size + s * 40
+            READ_ASCII czmp_section czmp_section_name (8) NULL
+            PATCH_IF (~%czmp_section_name%~ STRING_EQUAL ~.text~) BEGIN
+              READ_LONG (czmp_section + 8) czmp_virtual_size
+              READ_LONG (czmp_section + 16) czmp_raw_size
+              READ_LONG (czmp_section + 20) czmp_raw_start
+              SET czmp_text_found = 1
+              SET czmp_text_start = czmp_raw_start
+              SET czmp_text_end = czmp_raw_start + ((czmp_virtual_size < czmp_raw_size) ? czmp_virtual_size : czmp_raw_size)
+            END
+          END
+        END
         PATCH_IF (NOT czmp_pe_ok) BEGIN
           SPRINT reason ~%executable% is not a 64-bit Windows program~
+        END ELSE PATCH_IF (NOT czmp_text_found) BEGIN
+          SPRINT reason ~this game version is not supported (%executable% has no .text section)~
         END ELSE BEGIN
           FOR (p = 0; p < czmp_patterns; ++p) BEGIN
             SET czmp_size = $czmp_size(~%p%~)
             SET czmp_anchor_at = $czmp_anchor_at(~%p%~)
             SPRINT czmp_anchor $czmp_anchor(~%p%~)
-            SET czmp_found = 0
-            SET czmp_found_in_code = 0
+            SET czmp_found_in_text = 0
+            SET czmp_found_elsewhere = 0
             SET czmp_at = INDEX_BUFFER (CASE_SENSITIVE EXACT_MATCH ~%czmp_anchor%~)
             WHILE (czmp_at >= 0) BEGIN
               SET czmp_start = czmp_at - czmp_anchor_at
@@ -156,36 +247,28 @@ BEGIN
                 END
               END
               PATCH_IF czmp_same BEGIN
-                SET czmp_in_code = 0
-                FOR (s = 0; s < czmp_sections; ++s) BEGIN
-                  SET czmp_section = czmp_pe + 24 + czmp_optional_size + s * 40
-                  READ_LONG (czmp_section + 16) czmp_raw_size
-                  READ_LONG (czmp_section + 20) czmp_raw_start
-                  READ_LONG (czmp_section + 36) czmp_flags
-                  PATCH_IF (((czmp_flags BAND 0x20000000) != 0) AND (czmp_start >= czmp_raw_start)
-                         AND (czmp_start + czmp_size <= czmp_raw_start + czmp_raw_size)) BEGIN
-                    SET czmp_in_code = 1
-                  END
+                PATCH_IF ((czmp_start >= czmp_text_start) AND (czmp_start + czmp_size <= czmp_text_end)) BEGIN
+                  SET czmp_found_in_text += 1
+                END ELSE BEGIN
+                  SET czmp_found_elsewhere += 1
                 END
-                SET czmp_found += 1
-                SET czmp_found_in_code += czmp_in_code
               END
               SET czmp_at = INDEX_BUFFER (CASE_SENSITIVE EXACT_MATCH ~%czmp_anchor%~ (czmp_at + 1))
             END
-            SET $czmp_matches(~%p%~) = czmp_found
-            SET $czmp_in_code(~%p%~) = czmp_found_in_code
+            SET $czmp_in_text(~%p%~) = czmp_found_in_text
+            SET $czmp_elsewhere(~%p%~) = czmp_found_elsewhere
           END
         END
       ACTION_IF (STRING_LENGTH ~%reason%~ = 0) BEGIN
         OUTER_FOR (p = 0; p < czmp_patterns; ++p) BEGIN
-          ACTION_IF ($czmp_matches(~%p%~) = 0) AND (STRING_LENGTH ~%reason%~ = 0) BEGIN
+          ACTION_IF ($czmp_in_text(~%p%~) = 0) AND ($czmp_elsewhere(~%p%~) = 0) AND (STRING_LENGTH ~%reason%~ = 0) BEGIN
             OUTER_SPRINT reason ~this game version is not supported (%executable% lacks the lobby code the fix needs)~
           END
-          ACTION_IF ($czmp_matches(~%p%~) > 1) AND (STRING_LENGTH ~%reason%~ = 0) BEGIN
-            OUTER_SPRINT reason ~this game version is not supported (the lobby code in %executable% is ambiguous)~
-          END
-          ACTION_IF ($czmp_matches(~%p%~) = 1) AND ($czmp_in_code(~%p%~) = 0) AND (STRING_LENGTH ~%reason%~ = 0) BEGIN
+          ACTION_IF ($czmp_in_text(~%p%~) = 0) AND ($czmp_elsewhere(~%p%~) > 0) AND (STRING_LENGTH ~%reason%~ = 0) BEGIN
             OUTER_SPRINT reason ~this game version is not supported (the lobby code in %executable% lies outside the program code)~
+          END
+          ACTION_IF ($czmp_in_text(~%p%~) > 1) AND (STRING_LENGTH ~%reason%~ = 0) BEGIN
+            OUTER_SPRINT reason ~this game version is not supported (the lobby code in %executable% is ambiguous)~
           END
         END
         ACTION_IF (STRING_LENGTH ~%reason%~ = 0) BEGIN

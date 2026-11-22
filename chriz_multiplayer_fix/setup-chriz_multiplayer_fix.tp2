@@ -32,6 +32,13 @@ BEGIN ~Copy saves between single player and multiplayer on the Load screen (EEex
 ACTION_IF FILE_EXISTS ~override/M___EEex.lua~ BEGIN
   COPY ~chriz_multiplayer_fix/lua/M_CZMS.lua~ ~override/M_CZMS.lua~
   COPY ~chriz_multiplayer_fix/lua/CZMS.menu~ ~override/CZMS.menu~
+  // The button copies with LuaJIT's FFI. Its files stay either way, so it
+  // appears as soon as EEex's LuaJIT component is installed.
+  INCLUDE ~chriz_multiplayer_fix/lib/czmp_preflight.tpa~
+  LAF czmp_luajit RET czmp_luajit = luajit END
+  ACTION_IF NOT czmp_luajit BEGIN
+    PRINT ~Chriz Multiplayer Fix: the save copy button appears once EEex's LuaJIT component (B3-EEex-LuaJIT) is installed; InfinityLoader.ini does not run LuaJIT yet.~
+  END
 END ELSE BEGIN
   PRINT ~Chriz Multiplayer Fix: the save copy button is inactive; EEex is required. Install EEex, then reinstall component 1.~
 END

@@ -22,15 +22,33 @@ PAYLOAD = {
     },
 }
 ALL_PATTERNS = [pattern_bytes(p) for p in DB_PATTERNS]
+NO_LUAJIT = "the save copy button appears once EEex's LuaJIT component (B3-EEex-LuaJIT) is installed"
 
 
-def prepare(tmp_path, eeex=True, existing=None, exe="match"):
+def loader_ini(luajit=True):
+    """InfinityLoader.ini as EEex v1.3.1 ships it, with or without its LuaJIT component."""
+    mode, version = ("REPLACE_INTERNAL_WITH_EXTERNAL", "5.1-LuaJIT") if luajit else ("INTERNAL", "5.4")
+    return (
+        "[General]\r\n; The executables the loader tries, in order.\r\n"
+        "ExeNames=Baldur.exe,BaldurII.exe,icewind.exe,SiegeOfDragonspear.exe\r\n"
+        ";   ExeNames=BaldurReal.exe ...\r\n"
+        f"LuaLibrary=lua51.dll\r\nLuaPatchMode={mode}\r\nLuaVersionExternal={version}\r\n"
+        "[Auto-Generated]\r\nCachedExeTime=1\r\n"
+    ).encode()
+
+
+def install_eeex(folder, luajit=True):
+    (folder / "override/M___EEex.lua").write_text("-- EEex presence fixture\n")
+    (folder / "EEex_scripts/extra_pattern_dbs").mkdir(parents=True)
+    (folder / "EEex_scripts/extra_pattern_dbs/v2.7.3.0.db").write_text("[Other]\nPattern=90\n")
+    (folder / "InfinityLoader.ini").write_bytes(loader_ini(luajit))
+
+
+def prepare(tmp_path, eeex=True, existing=None, exe="match", luajit=True):
     shutil.copytree(MOD, tmp_path / "chriz_multiplayer_fix", ignore=shutil.ignore_patterns("backup"))
     (tmp_path / "override").mkdir()
     if eeex:
-        (tmp_path / "override/M___EEex.lua").write_text("-- EEex presence fixture\n")
-        (tmp_path / "EEex_scripts/extra_pattern_dbs").mkdir(parents=True)
-        (tmp_path / "EEex_scripts/extra_pattern_dbs/v2.7.3.0.db").write_text("[Other]\nPattern=90\n")
+        install_eeex(tmp_path, luajit)
     if exe == "match":
         write_fake_exe(tmp_path / "Baldur.exe", code=ALL_PATTERNS)
     for path, contents in (existing or {}).items():
@@ -153,8 +171,7 @@ def test_missing_eeex_installs_as_logged_noop(weidu, tmp_path):
     assert len(active_rows(tmp_path)) == 2
     assert_unchanged(tmp_path, preserved)
     # Installing EEex later and reinstalling enables both.
-    (tmp_path / "override/M___EEex.lua").write_text("-- EEex installed later")
-    (tmp_path / "EEex_scripts/extra_pattern_dbs").mkdir(parents=True)
+    install_eeex(tmp_path)
     invoke(weidu, tmp_path, TP2, "--force-install-list", "0", "1")
     assert_payload(tmp_path, "0")
     assert_payload(tmp_path, "1")
@@ -167,6 +184,16 @@ UNSUPPORTED = {
     "a pattern is missing": (dict(code=ALL_PATTERNS[:-1]), "lacks the lobby code"),
     "a pattern occurs twice": (dict(code=ALL_PATTERNS + ALL_PATTERNS[:1]), "is ambiguous"),
     "a pattern lies outside the code": (dict(code=ALL_PATTERNS[1:], data=ALL_PATTERNS[:1]), "outside the program code"),
+    # InfinityLoader searches only the section named .text, as far as it reaches in memory.
+    "a pattern lies in another executable section": (
+        dict(code=ALL_PATTERNS[1:], extra=[(b".text2", ALL_PATTERNS[:1], 0x60000020)]),
+        "outside the program code",
+    ),
+    "a pattern lies beyond the code in memory": (
+        dict(code=ALL_PATTERNS, text_virtual=64 * 3 + len(ALL_PATTERNS[0]) + len(ALL_PATTERNS[1])),
+        "outside the program code",
+    ),
+    "the code section has another name": (dict(code=ALL_PATTERNS, text_name=b"CODE"), "has no .text section"),
     "one byte differs": (
         dict(code=ALL_PATTERNS[:2] + [ALL_PATTERNS[2][:-1] + bytes([ALL_PATTERNS[2][-1] ^ 0xFF])]),
         "lacks the lobby code",
@@ -206,23 +233,73 @@ def test_no_executable_gets_no_patterns(weidu, tmp_path):
     assert_payload(tmp_path, "0", present=False)
 
 
-@pytest.mark.parametrize("names, used", (
-    ("ExeNames=Nope.exe, Custom.exe ,Baldur.exe", "Custom.exe"),
-    ("exenames = Baldur.exe", "Baldur.exe"),
-))
-def test_the_executable_the_loader_starts_is_checked(weidu, tmp_path, names, used):
+@pytest.mark.parametrize("ini", (None, b"[Other]\r\nExeNames=Baldur.exe\r\n"))
+def test_a_loader_without_executables_gets_no_patterns(weidu, tmp_path, ini):
+    """InfinityLoader starts no game without ExeNames in [General], so nothing goes in."""
+    prepare(tmp_path)
+    if ini is None:
+        (tmp_path / "InfinityLoader.ini").unlink()
+    else:
+        (tmp_path / "InfinityLoader.ini").write_bytes(ini)
+    output = invoke(weidu, tmp_path, TP2, "--force-install-list", "0")
+    assert INACTIVE + "; InfinityLoader.ini names no game executable" in output
+    assert_payload(tmp_path, "0", present=False)
+
+
+# InfinityLoader reads ExeNames with Windows' GetPrivateProfileString and starts
+# the first name that exists. These rules were checked against that function
+# (ctypes, 2026-11-22). Baldur.exe lacks a pattern, Custom.exe has them all.
+LOADER_CHOICE = {
+    "the first name that exists": ("[General]\r\nExeNames=Nope.exe,Custom.exe,Baldur.exe\r\n", "Custom.exe"),
+    "case and blanks around names of section and key": (
+        "[ general ]\r\n\t exenames \t=  Custom.exe,Baldur.exe \t\r\n", "Custom.exe"),
+    "one pair of enclosing quotes": ('[General]\r\nExeNames="Custom.exe,Baldur.exe"\r\n', "Custom.exe"),
+    "line ends without CR": ("[General]\nExeNames=Custom.exe\n", "Custom.exe"),
+    "names are not trimmed": ("[General]\r\nExeNames=Nope.exe, Custom.exe,Baldur.exe\r\n", "Baldur.exe"),
+    "the first key wins": ("[General]\r\nExeNames=Baldur.exe\r\nExeNames=Custom.exe\r\n", "Baldur.exe"),
+    "other sections are not read": (
+        "[Other]\r\nExeNames=Custom.exe\r\n[General]\r\nExeNames=Baldur.exe\r\n[More]\r\nExeNames=Custom.exe\r\n",
+        "Baldur.exe"),
+    "comments are not read": ("[General]\r\n;ExeNames=Custom.exe\r\nExeNames=Baldur.exe\r\n", "Baldur.exe"),
+    "a second General section is not read": (
+        "[General]\r\nOther=1\r\n[Other]\r\n[General]\r\nExeNames=Custom.exe\r\n", None),
+}
+
+
+@pytest.mark.parametrize("case", sorted(LOADER_CHOICE))
+def test_the_executable_the_loader_starts_is_checked(weidu, tmp_path, case):
+    ini, used = LOADER_CHOICE[case]
     prepare(tmp_path, exe=None)
     write_fake_exe(tmp_path / "Baldur.exe", code=ALL_PATTERNS[:1])
-    if used == "Custom.exe":
-        write_fake_exe(tmp_path / "Custom.exe", code=ALL_PATTERNS)
-    else:
-        write_fake_exe(tmp_path / "Baldur.exe", code=ALL_PATTERNS)
-    (tmp_path / "InfinityLoader.ini").write_bytes(
-        b"[General]\r\n; The list of executables\r\n" + names.encode() + b"\r\nOther=1\r\n"
-    )
+    write_fake_exe(tmp_path / "Custom.exe", code=ALL_PATTERNS)
+    (tmp_path / "InfinityLoader.ini").write_bytes(ini.encode())
     output = invoke(weidu, tmp_path, TP2, "--force-install-list", "0")
-    assert f"the lobby crash fix is installed for {used}" in output
+    if used == "Custom.exe":
+        assert "the lobby crash fix is installed for Custom.exe" in output, output
+        assert_payload(tmp_path, "0")
+    else:
+        reason = "Baldur.exe lacks the lobby code" if used else "InfinityLoader.ini names no game executable"
+        assert INACTIVE in output and reason in output, output
+        assert_payload(tmp_path, "0", present=False)
+
+
+def test_copies_outside_the_code_do_not_matter(weidu, tmp_path):
+    """The loader finds each pattern in .text; the same bytes in data change nothing."""
+    prepare(tmp_path, exe=None)
+    write_fake_exe(tmp_path / "Baldur.exe", code=ALL_PATTERNS, data=ALL_PATTERNS)
+    output = invoke(weidu, tmp_path, TP2, "--force-install-list", "0")
+    assert "the lobby crash fix is installed for Baldur.exe" in output
     assert_payload(tmp_path, "0")
+
+
+@pytest.mark.parametrize("luajit", (True, False))
+def test_the_button_says_when_luajit_is_missing(weidu, tmp_path, luajit):
+    """Without EEex's LuaJIT component the files still go in, with one log line."""
+    prepare(tmp_path, luajit=luajit)
+    output = invoke(weidu, tmp_path, TP2, "--force-install-list", "0", "1")
+    assert (NO_LUAJIT in output) != luajit
+    assert_payload(tmp_path, "0")
+    assert_payload(tmp_path, "1")
 
 
 @pytest.mark.parametrize("game, name", (

@@ -40,13 +40,17 @@ hand.
 
 - Windows x64 **BG:EE (including SoD), BG2:EE, EET, or IWD:EE 2.7.3.0** with
   [EEex](https://github.com/Bubb13/EEex) **v1.3.1** (tested) or **v1.2.0** (checked against its
-  source, not tested in a game). The save copy button needs LuaJIT enabled (EEex's default).
+  source, not tested in a game).
+- The save copy button also needs EEex's **LuaJIT** component (`B3-EEex-LuaJIT`, listed by
+  EEex as experimental; Chriz Easy BG and Chriz Easy IWD install it). Without it the button
+  stays hidden, and the installer says so.
 
 1. Close the game and install EEex first.
-2. Copy the `chriz_multiplayer_fix` folder into your game directory.
-3. Copy Windows x64 `weidu.exe` from [WeiDU](https://github.com/WeiDUorg/weidu/releases) into
-   the game directory as `setup-chriz_multiplayer_fix.exe`.
-4. Run `setup-chriz_multiplayer_fix.exe`, install components **0** and **1**, and launch via
+2. Download `chriz-multiplayer-fix-v<version>.zip` from
+   [Releases](https://github.com/Chrizhermann/chriz-multiplayer-fix/releases) and extract it
+   into your game directory. It holds `setup-chriz_multiplayer_fix.exe` (the official WeiDU 249)
+   and the `chriz_multiplayer_fix` folder, nothing else.
+3. Run `setup-chriz_multiplayer_fix.exe`, install components **0** and **1**, and launch via
    `InfinityLoader.exe`. Re-run to reinstall or uninstall cleanly.
 
 ---
@@ -65,14 +69,15 @@ simultaneously, causing a double-free / heap corruption crash. Two small EEex ho
 
 ### Fallback Behavior & Support Docs
 
-- **Safe fallbacks:** The installer checks the game's executable before it installs the crash
-  fix. If its lobby code differs from the verified `2.7.3.0` builds (another engine version,
-  say), component 0 installs nothing and says so in its log, and the game starts and plays as
-  before. After a game update, install the mod again so the check runs on the new executable.
-  If EEex is missing at install time, both components install as logged no-ops without
-  aborting.
+- **Safe fallbacks:** The installer checks the executable InfinityLoader starts before it
+  installs the crash fix. If its lobby code differs from the verified `2.7.3.0` builds (another
+  engine version, say), component 0 installs nothing and says so in its log, and the game starts
+  and plays as before. After a game update, install the mod again so the check runs on the new
+  executable. If EEex is missing at install time, both components install as logged no-ops
+  without aborting.
 - **Documentation & tests:** [Support and verification details](docs/compatibility.md) ·
-  [Changelog](CHANGELOG.md) · [Offline tests](tests/README.md)
+  [Changelog](CHANGELOG.md) ·
+  [Offline tests](https://github.com/Chrizhermann/chriz-multiplayer-fix/blob/main/tests/README.md)
 
 ## License
 

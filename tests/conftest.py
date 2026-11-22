@@ -26,29 +26,33 @@ def pattern_bytes(pattern, filler=0xCC):
     )
 
 
-def write_fake_exe(path, code=(), data=(), machine=0x8664):
-    """A minimal 64-bit PE: a .text (code) and a .rdata section holding the given bytes."""
+def write_fake_exe(path, code=(), data=(), machine=0x8664, extra=(), text_virtual=None, text_name=b".text"):
+    """A minimal 64-bit PE: a .text (code) and a .rdata section holding the given bytes.
+
+    extra adds sections as (name, blobs, flags); text_virtual sets the .text
+    VirtualSize (default: its raw size); text_name renames the code section."""
     def section(blobs):
         body = b"\x90" * 64 + b"".join(blob + b"\x90" * 64 for blob in blobs)
         return body + b"\0" * (-len(body) % 0x200)
 
-    text, rdata = section(code), section(data)
+    sections = [(text_name, section(code), 0x60000020), (b".rdata", section(data), 0x40000040)]
+    sections += [(name, section(blobs), flags) for name, blobs, flags in extra]
     headers = bytearray(0x400)
     headers[0:2] = b"MZ"
     struct.pack_into("<I", headers, 0x3C, 0x80)
     headers[0x80:0x84] = b"PE\0\0"
-    struct.pack_into("<HHIIIHH", headers, 0x84, machine, 2, 0, 0, 0, 0xF0, 0x22)
+    struct.pack_into("<HHIIIHH", headers, 0x84, machine, len(sections), 0, 0, 0, 0xF0, 0x22)
     struct.pack_into("<H", headers, 0x98, 0x20B)
     table = 0x98 + 0xF0
-    for index, (name, size, raw, flags) in enumerate((
-        (b".text", len(text), 0x400, 0x60000020),
-        (b".rdata", len(rdata), 0x400 + len(text), 0x40000040),
-    )):
+    raw = 0x400
+    for index, (name, body, flags) in enumerate(sections):
         entry = table + index * 40
+        virtual = text_virtual if (index == 0 and text_virtual is not None) else len(body)
         headers[entry:entry + 8] = name.ljust(8, b"\0")
-        struct.pack_into("<IIII", headers, entry + 8, size, 0x1000 * (index + 1), size, raw)
+        struct.pack_into("<IIII", headers, entry + 8, virtual, 0x1000 * (index + 1), len(body), raw)
         struct.pack_into("<I", headers, entry + 36, flags)
-    path.write_bytes(bytes(headers) + text + rdata)
+        raw += len(body)
+    path.write_bytes(bytes(headers) + b"".join(body for _, body, _ in sections))
 
 
 @pytest.fixture(scope="session")

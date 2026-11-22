@@ -62,11 +62,17 @@ normally opens after 2 seconds. A check inside the game comes too late for
 that, so component 0 checks the executable when it is installed
 (`lib/czmp_preflight.tpa`):
 
-- The executable is the one InfinityLoader starts: the first existing name in
-  `[General] ExeNames` of `InfinityLoader.ini` (EEex's default list when the
-  line is missing).
+- The executable is the one InfinityLoader starts: the first name in
+  `ExeNames` that exists. The setting is read the way Windows'
+  `GetPrivateProfileString` reads it for the loader: only the first `[General]`
+  section, the first `ExeNames` there, names of section and key in any case
+  and with blanks around them, the value without surrounding blanks and one
+  pair of enclosing quotes; the names between the commas are taken as written.
+  Without `ExeNames` the loader starts no game, and nothing is installed.
 - It must be a 64-bit Windows program, and every pattern of `CZMP.db` must
-  match exactly once, byte for byte, inside its program code.
+  match exactly once, byte for byte, inside its `.text` section, the only part
+  InfinityLoader searches (as far as the section reaches both in memory and
+  in the file). Copies of the same bytes elsewhere do not matter.
 - Otherwise neither `M_CZMP.lua` nor `CZMP.db` is installed, copies left by an
   earlier install are removed (uninstalling puts them back), and the log names
   the reason. The save copy button does not depend on it.
@@ -90,6 +96,13 @@ and a standalone BG:EE game (patterns only).
 
 ## The save copy button
 
+- The button needs EEex's LuaJIT component (`B3-EEex-LuaJIT`, component 8 of
+  EEex v1.2.0 and v1.3.1, which EEex lists as experimental; it sets
+  `LuaPatchMode=REPLACE_INTERNAL_WITH_EXTERNAL` and
+  `LuaVersionExternal=5.1-LuaJIT` in `InfinityLoader.ini`). Without it the
+  button stays hidden with one console line, and the installer prints one
+  line; its files are still installed, so it appears once LuaJIT is added.
+  Chriz Easy BG and Chriz Easy IWD install LuaJIT.
 - Saves live in `Documents\<engine_name>\save` and `...\mpsave` (the Documents
   folder Windows reports, also when OneDrive moved it).
 - The button copies one save folder file by file with the Windows file
