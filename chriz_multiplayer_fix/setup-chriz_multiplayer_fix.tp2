@@ -1,0 +1,23 @@
+BACKUP ~chriz_multiplayer_fix/backup~
+AUTHOR ~ChrizFader~
+VERSION ~0.1.0~
+
+// Both components only add runtime files. No area, creature, spell, script,
+// save, executable or shared configuration is edited. EEex is the only
+// dependency; without it a component installs as a logged no-op.
+
+BEGIN ~Multiplayer lobby crash fix (EEex)~ DESIGNATED 0
+ACTION_IF (FILE_EXISTS ~override/M___EEex.lua~) AND (DIRECTORY_EXISTS ~EEex_scripts/extra_pattern_dbs~) BEGIN
+  COPY ~chriz_multiplayer_fix/lua/M_CZMP.lua~ ~override/M_CZMP.lua~
+  COPY ~chriz_multiplayer_fix/lua/CZMP.db~ ~EEex_scripts/extra_pattern_dbs/CZMP.db~
+END ELSE BEGIN
+  PRINT ~Chriz Multiplayer Fix: the lobby crash fix is inactive; EEex is required. Install EEex, then reinstall component 0.~
+END
+
+BEGIN ~Copy saves between single player and multiplayer on the Load screen (EEex)~ DESIGNATED 1
+ACTION_IF FILE_EXISTS ~override/M___EEex.lua~ BEGIN
+  COPY ~chriz_multiplayer_fix/lua/M_CZMS.lua~ ~override/M_CZMS.lua~
+  COPY ~chriz_multiplayer_fix/lua/CZMS.menu~ ~override/CZMS.menu~
+END ELSE BEGIN
+  PRINT ~Chriz Multiplayer Fix: the save copy button is inactive; EEex is required. Install EEex, then reinstall component 1.~
+END

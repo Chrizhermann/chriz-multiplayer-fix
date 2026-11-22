@@ -1,0 +1,38 @@
+-- Save copy button templates (M_CZMS.lua places them on the Load screen).
+menu
+{
+	name 'CZMS_TEMPLATES'
+	ignoreEsc
+
+	-- List layout: works on the selected save, like Load and Delete.
+	template
+	{
+		button
+		{
+			area 0 0 204 44
+			bam GUIBUTWT
+			text lua "CZMS.ButtonText()"
+			text style "button"
+			clickable lua "CZMS.SelectedClickable()"
+			action "CZMS.SelectedAction()"
+		}
+		name "CZMS_TEMPLATE_SelectedButton"
+	}
+
+	-- Row layout: one per row, instanceId = the row.
+	template
+	{
+		button
+		{
+			area 0 0 92 44
+			bam GUIBUTNT
+			enabled "CZMS.RowEnabled(instanceId)"
+			text lua "CZMS.CopyText()"
+			text style "button"
+			tooltip lua "CZMS.ButtonText()"
+			action "CZMS.RowAction(instanceId)"
+			actionScroll "scrollLoadGames()"
+		}
+		name "CZMS_TEMPLATE_RowButton"
+	}
+}

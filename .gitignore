@@ -1,0 +1,10 @@
+__pycache__/
+.pytest_cache/
+.test-tmp/
+.tools/
+.venv/
+dist/
+*.pyc
+*.log
+*.debug
+chriz_multiplayer_fix/backup/
