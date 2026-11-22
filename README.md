@@ -1,63 +1,76 @@
 # Chriz Multiplayer Fix
 
-Two small EEex additions for the Enhanced Editions' multiplayer:
+Two EEex fixes for multiplayer in **BG:EE (incl. SoD)**, **BG2:EE**, **EET**, and **IWD:EE**:
 
-1. **Lobby crash fix.** The games crash at random when you leave Beamdog's
-   multiplayer lobby, most often with *Multiplayer > Local network game >
-   Load*. This component removes the cause.
-2. **Copy saves between single player and multiplayer.** A button on the Load
-   screen copies a save from the multiplayer saves to the single-player saves,
-   or the other way round. The original stays as it is.
+1. **Lobby crash fix** — stops random crashes when leaving Beamdog's multiplayer lobby
+   (especially *Multiplayer > Local network game > Load*).
+2. **Copy saves between multiplayer and single player** — adds a one-click **Copy** /
+   **Copy to single player** / **Copy to multiplayer** button right on the Load screen,
+   keeping the original save untouched.
 
-Together they make it easy to let viewers or friends create characters in a
-multiplayer session and then carry the party into a single-player game, and
-back again, whenever you like.
+Part of **[Chriz Easy BG](https://bg.chrizfader.org/collection)** &
+**[Chriz Easy IWD](https://bg.chrizfader.org/iwd)**
 
-## Moving a party between multiplayer and single player
+---
 
-1. **Multiplayer > Local network game > Load** (or New Game): host the game.
-   Players create or import their characters. Save the game.
-2. Still on the multiplayer **Load** screen, copy that save:
-   - **Icewind Dale:EE**: click **Copy** in the save's row.
-   - **Baldur's Gate:EE, BG2:EE, EET**: click the save, then
-     **Copy to single player** at the bottom left.
-3. Confirm. The game says where the copy is: **Single Player > Load Game**.
-4. Load it there and play on. To go back to multiplayer, do the same on the
-   single-player Load screen with **Copy to multiplayer**.
+## Part 1: For Players
 
-The copy gets the next free slot number in the other folder, so no save is
-ever overwritten. Files are copied directly; no window opens.
+Together, these let friends or stream viewers create a custom party in multiplayer, move the
+save straight into single player (and back again whenever you want) without copying folders by
+hand.
 
-## Why the lobby crashed
+![BG2:EE / EET Load screen with Copy to single player button](docs/images/mp-load-copy-bg.png)
 
-The lobby client runs on its own network thread, but its tasks were also run
-by the game's main thread whenever the main thread woke them. On leaving the
-lobby both threads tore the same connection down at once, closed and freed
-the same socket twice, and the heap was corrupted. Two small hooks keep every
-lobby task on the network thread. Details:
-[support and verification](docs/compatibility.md).
+![IWD:EE Load screen with inline Copy button](docs/images/mp-load-copy-iwd.png)
 
-## Requirements and support
+### Moving a Party Between Multiplayer and Single Player
 
-Windows x64 **BG:EE (including SoD), BG2:EE, EET and IWD:EE 2.7.3.0** with
-[EEex](https://github.com/Bubb13/EEex) **v1.2.0 or v1.3.1**. The save copy
-button needs EEex running on LuaJIT (EEex's default). Part of **Chriz Easy
-BG** and **Chriz Easy IWD**.
+1. Host a game via **Multiplayer > Local network game > Load** (or **New Game**), create or
+   import characters, and save.
+2. On the multiplayer **Load** screen, copy the save:
+   - **IWD:EE:** click **Copy** in the save's row.
+   - **BG:EE, BG2:EE, EET:** select the save, then click **Copy to single player** at the
+     bottom left.
+3. Confirm the prompt — the game creates the copy in **Single Player > Load Game** using the
+   next free save slot (nothing is ever overwritten).
+4. Load the copy in single player and play on. To return to multiplayer later, repeat from
+   **Single Player > Load Game** with **Copy to multiplayer**.
 
-If an engine build differs from the one checked, the crash fix stays inactive
-and the game runs as before. Without EEex, each component installs as a logged
-no-op.
+### Requirements & Installation
 
-## Install
+- Windows x64 **BG:EE (including SoD), BG2:EE, EET, or IWD:EE 2.7.3.0** with
+  [EEex](https://github.com/Bubb13/EEex) **v1.2.0 or v1.3.1** (LuaJIT enabled, EEex's default,
+  is required for the save copy button).
 
 1. Close the game and install EEex first.
-2. Copy the `chriz_multiplayer_fix` folder into the game folder.
-3. Copy a Windows x64 `weidu.exe` from
-   [WeiDU](https://github.com/WeiDUorg/weidu/releases) into the game folder and
-   rename that copy to `setup-chriz_multiplayer_fix.exe`.
-4. Run it and install components **0** and **1**. Start the game through
-   EEex's `InfinityLoader.exe`.
+2. Copy the `chriz_multiplayer_fix` folder into your game directory.
+3. Copy Windows x64 `weidu.exe` from [WeiDU](https://github.com/WeiDUorg/weidu/releases) into
+   the game directory as `setup-chriz_multiplayer_fix.exe`.
+4. Run `setup-chriz_multiplayer_fix.exe`, install components **0** and **1**, and launch via
+   `InfinityLoader.exe`. Re-run to reinstall or uninstall cleanly.
 
-Run `setup-chriz_multiplayer_fix.exe` again to reinstall or uninstall.
+---
 
-[MIT license](LICENSE) · [Changelog](CHANGELOG.md) · [Offline tests](tests/README.md)
+## Part 2: Technical Details, Support & License
+
+### Why the Lobby Crashed & How the Fix Works
+
+The multiplayer lobby's libjingle `XmppClient` and socket belong to a dedicated network thread
+(`XmppThread`), but `XmppPump::WakeTasks` (and inlined `Task::Start` / `Task::Wake`) posted
+lobby tasks to `Thread::Current()` — meaning opening or refreshing rooms made the main thread
+run lobby tasks too. On leaving the lobby, `DPProviderJingle::Close` (main thread) and
+`XmppThread::OnMessage` (`MSG_DISCONNECT`) tore down and freed the same `XmppClient`/socket
+simultaneously, causing a double-free / heap corruption crash. Two small EEex hooks (`CZMP.db`
++ `M_CZMP.lua`) redirect every lobby task post back to the network thread.
+
+### Fallback Behavior & Support Docs
+
+- **Safe fallbacks:** If an executable's bytes differ from the verified `2.7.3.0` signatures,
+  the crash fix stays inactive and the game runs unmodified. If EEex is missing at install
+  time, both components install as logged no-ops without aborting.
+- **Documentation & tests:** [Support and verification details](docs/compatibility.md) ·
+  [Changelog](CHANGELOG.md) · [Offline tests](tests/README.md)
+
+## License
+
+Licensed under the [MIT License](LICENSE).
