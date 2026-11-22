@@ -25,9 +25,14 @@ ALL_PATTERNS = [pattern_bytes(p) for p in DB_PATTERNS]
 NO_LUAJIT = "the save copy button appears once EEex's LuaJIT component (B3-EEex-LuaJIT) is installed"
 
 
+LUA_SETTINGS = {True: ("REPLACE_INTERNAL_WITH_EXTERNAL", "5.1-LuaJIT"), False: ("INTERNAL", "5.4")}
+
+
 def loader_ini(luajit=True):
-    """InfinityLoader.ini as EEex v1.3.1 ships it, with or without its LuaJIT component."""
-    mode, version = ("REPLACE_INTERNAL_WITH_EXTERNAL", "5.1-LuaJIT") if luajit else ("INTERNAL", "5.4")
+    """InfinityLoader.ini as EEex v1.3.1 ships it, with or without its LuaJIT component.
+
+    luajit may also be a (LuaPatchMode, LuaVersionExternal) pair."""
+    mode, version = LUA_SETTINGS[luajit] if isinstance(luajit, bool) else luajit
     return (
         "[General]\r\n; The executables the loader tries, in order.\r\n"
         "ExeNames=Baldur.exe,BaldurII.exe,icewind.exe,SiegeOfDragonspear.exe\r\n"
@@ -193,6 +198,16 @@ UNSUPPORTED = {
         dict(code=ALL_PATTERNS, text_virtual=64 * 3 + len(ALL_PATTERNS[0]) + len(ALL_PATTERNS[1])),
         "outside the program code",
     ),
+    # The file holds only SizeOfRawData bytes of .text, whatever VirtualSize says.
+    "a pattern lies after the code in the file": (
+        dict(code=ALL_PATTERNS[:2], data=ALL_PATTERNS[2:], text_virtual=0x10000),
+        "outside the program code",
+    ),
+    # The loader takes the first section named .text.
+    "a pattern lies in a second .text section": (
+        dict(code=ALL_PATTERNS[1:], extra=[(b".text", ALL_PATTERNS[:1], 0x60000020)]),
+        "outside the program code",
+    ),
     "the code section has another name": (dict(code=ALL_PATTERNS, text_name=b"CODE"), "has no .text section"),
     "one byte differs": (
         dict(code=ALL_PATTERNS[:2] + [ALL_PATTERNS[2][:-1] + bytes([ALL_PATTERNS[2][-1] ^ 0xFF])]),
@@ -292,10 +307,23 @@ def test_copies_outside_the_code_do_not_matter(weidu, tmp_path):
     assert_payload(tmp_path, "0")
 
 
-@pytest.mark.parametrize("luajit", (True, False))
-def test_the_button_says_when_luajit_is_missing(weidu, tmp_path, luajit):
+LUA_CASES = {
+    "EEex LuaJIT component": (True, True),
+    "engine Lua": (False, False),
+    "LuaJIT version in any case": (("REPLACE_INTERNAL_WITH_EXTERNAL", "5.1-luajit"), True),
+    # EXTERNAL runs only EEex's own scripts on LuaJIT; the M_ files stay on the engine's Lua.
+    "EXTERNAL mode": (("EXTERNAL", "5.1-LuaJIT"), False),
+    # The loader compares the mode case-sensitively and refuses other spellings.
+    "mode in lower case": (("replace_internal_with_external", "5.1-LuaJIT"), False),
+    "external Lua 5.4": (("REPLACE_INTERNAL_WITH_EXTERNAL", "5.4"), False),
+}
+
+
+@pytest.mark.parametrize("case", sorted(LUA_CASES))
+def test_the_button_says_when_luajit_is_missing(weidu, tmp_path, case):
     """Without EEex's LuaJIT component the files still go in, with one log line."""
-    prepare(tmp_path, luajit=luajit)
+    settings, luajit = LUA_CASES[case]
+    prepare(tmp_path, luajit=settings)
     output = invoke(weidu, tmp_path, TP2, "--force-install-list", "0", "1")
     assert (NO_LUAJIT in output) != luajit
     assert_payload(tmp_path, "0")

@@ -72,6 +72,8 @@ def weidu_bytes(path: Path) -> bytes:
 def _write_deterministic(zf: zipfile.ZipFile, arcname: str, data: bytes) -> None:
     info = zipfile.ZipInfo(filename=arcname, date_time=FIXED_ZIP_DT)
     info.compress_type = zipfile.ZIP_DEFLATED
+    # Fixed "made by" system so the bytes do not depend on the OS that builds.
+    info.create_system = 3
     info.external_attr = 0o644 << 16
     zf.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
 

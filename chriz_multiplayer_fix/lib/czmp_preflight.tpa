@@ -90,16 +90,16 @@ BEGIN
 END
 
 // Whether the loader runs EEex's Lua on LuaJIT (EEex component
-// B3-EEex-LuaJIT), which the save copy button needs.
+// B3-EEex-LuaJIT), which the save copy button needs. The loader compares
+// LuaPatchMode case-sensitively; only REPLACE_INTERNAL_WITH_EXTERNAL runs the
+// override M_ files on the external Lua (EXTERNAL keeps them on the engine's).
 DEFINE_ACTION_FUNCTION czmp_luajit
   RET luajit
 BEGIN
   LAF czmp_loader_setting STR_VAR key = ~LuaPatchMode~ RET czmp_mode = value END
   LAF czmp_loader_setting STR_VAR key = ~LuaVersionExternal~ RET czmp_version = value END
-  ACTION_TO_LOWER czmp_mode
   ACTION_TO_LOWER czmp_version
-  OUTER_SET luajit = (((~%czmp_mode%~ STRING_EQUAL ~replace_internal_with_external~)
-                       OR (~%czmp_mode%~ STRING_EQUAL ~external~))
+  OUTER_SET luajit = ((~%czmp_mode%~ STRING_EQUAL ~REPLACE_INTERNAL_WITH_EXTERNAL~)
                       AND ((~%czmp_version%~ STRING_CONTAINS_REGEXP ~luajit~) = 0))
 END
 
